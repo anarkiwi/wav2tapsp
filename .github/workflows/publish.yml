@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read    # checkout (a permissions block defaults everything else to none)
       id-token: write   # required for Trusted Publishing
     steps:
       - uses: actions/checkout@v6
