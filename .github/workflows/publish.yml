@@ -1,0 +1,29 @@
+name: Publish to PyPI
+
+# Publishes on a GitHub Release. Uses PyPI Trusted Publishing (OIDC), so no API
+# token is needed -- configure a trusted publisher for this repo/workflow at
+# https://pypi.org/manage/account/publishing/ (or add a PYPI_API_TOKEN secret
+# and pass it to the publish action instead).
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read    # checkout (a permissions block defaults everything else to none)
+      id-token: write   # required for Trusted Publishing
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

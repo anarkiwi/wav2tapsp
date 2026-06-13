@@ -1,8 +1,6 @@
-#!/usr/bin/python
-
 # Copyright 2022 Josh Bailey (josh@vandervecken.com)
 
-"""Self-contained Commodore 64 cassette-tape toolkit.
+"""Self-contained Commodore 64 cassette-tape toolkit (standard ROM format).
 
 Implements just enough of the C64 ROM ("Kernal") tape format to drive a full
 round-trip test of ``wav2tapsp`` with no emulator or copyrighted ROMs:
@@ -12,6 +10,10 @@ round-trip test of ``wav2tapsp`` with no emulator or copyrighted ROMs:
 The format implemented here (leader / countdown sync / per-byte dipole markers /
 odd parity / per-block checksum / two block copies) is the standard format the
 C64 ROM SAVEs and LOADs, so the produced .tap files are real C64 tapes.
+
+This module also provides the shared building blocks used by ``formats`` (the
+fast-loader registry): the TAP container, the WAV synthesiser and the BASIC PRG
+helpers.
 
 References:
   http://unusedino.de/ec64/technical/formats/tap.html
@@ -131,7 +133,91 @@ def parse_basic_prg(prg):
 
 
 # --------------------------------------------------------------------------
-# PRG -> TAP (encode)
+# TAP container (shared with the fast-loader formats)
+# --------------------------------------------------------------------------
+
+def wrap_tap(pulses):
+    """Wrap a list/array of TAP pulse bytes in a C64-TAPE-RAW (version 0) file."""
+    body = bytes(bytearray(pulses))
+    out = bytearray()
+    out += TAP_MAGIC
+    out += bytes([0])           # version 0
+    out += bytes(3)             # reserved
+    out += struct.pack('<I', len(body))
+    out += body
+    return bytes(out)
+
+
+def parse_tap(tap_bytes):
+    """Read a version-0 .tap container, returning the list of pulse bytes."""
+    if tap_bytes[:12] != TAP_MAGIC:
+        raise DecodeError('not a C64 TAP file')
+    (length,) = struct.unpack('<I', tap_bytes[16:20])
+    return list(tap_bytes[20:20 + length])
+
+
+# --------------------------------------------------------------------------
+# TAP -> WAV (synthesise audio)
+# --------------------------------------------------------------------------
+
+def tap_pulses_to_samples(pulses, samplerate, cpufreq=CPU_FREQ, amplitude=20000,
+                          waveform='square'):
+    """Render TAP pulses as an int16 sample array.
+
+    Each pulse becomes one full wave cycle whose period is ``pulse * 8 / cpufreq``
+    seconds, so every pulse boundary is a single rising zero crossing -- exactly
+    what wav2tapsp measures.
+
+    waveform='square' produces a hard square wave (isolates timing, used for the
+    sample-rate study). waveform='sine' produces one sine cycle per pulse (a more
+    realistic model of tape audio, used for the resolution study).
+    """
+    p = np.asarray(pulses, dtype=np.float64)
+    dur_n = p * 8.0 / cpufreq * samplerate     # samples per pulse (float)
+    starts = np.empty(len(p) + 1)
+    starts[0] = 0.0
+    np.cumsum(dur_n, out=starts[1:])
+    total = int(np.ceil(starts[-1]))
+    n = np.arange(total)
+    idx = np.searchsorted(starts, n, side='right') - 1
+    np.clip(idx, 0, len(p) - 1, out=idx)
+    within = n - starts[idx]
+    phase = within / dur_n[idx]                # 0..1 within the pulse
+    if waveform == 'square':
+        samples = np.where(phase < 0.5, amplitude, -amplitude)
+    elif waveform == 'sine':
+        samples = amplitude * np.sin(2.0 * np.pi * phase)
+    else:
+        raise ValueError('unknown waveform %r' % waveform)
+    return np.round(samples).astype(np.int16)
+
+
+def quantize_resolution(samples, bits, amplitude=20000):
+    """Requantise a signed sample array to ``bits`` bits of amplitude resolution.
+
+    Uses a mid-rise quantiser with no exact zero level, so ``bits == 1`` reduces
+    to the sign of the signal (the coarsest representation that still preserves
+    zero crossings). Returns an int16 array.
+    """
+    if bits < 1:
+        raise ValueError('bits must be >= 1')
+    step = 2.0 * amplitude / (2 ** bits)
+    q = (np.floor(np.asarray(samples, dtype=np.float64) / step) + 0.5) * step
+    q = np.clip(q, -amplitude, amplitude)
+    return np.round(q).astype(np.int16)
+
+
+def write_wav(path, samples, samplerate):
+    """Write a mono 16-bit PCM WAV file (readable by scipy.io.wavfile)."""
+    with wave.open(path, 'wb') as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(samplerate)
+        w.writeframes(np.asarray(samples, dtype='<i2').tobytes())
+
+
+# --------------------------------------------------------------------------
+# PRG -> TAP (encode, standard ROM format)
 # --------------------------------------------------------------------------
 
 def _emit_bit(pulses, bit):
@@ -203,64 +289,11 @@ def prg_to_tap(prg, name='WAV2TAPSP', file_type=1, copies=2,
         _emit_block(pulses, data, first_copy=(copy == 0), leader=mid_leader)
     pulses.extend([SHORT] * trailer)
 
-    return _wrap_tap(pulses)
-
-
-def _wrap_tap(pulses):
-    body = bytes(pulses)
-    out = bytearray()
-    out += TAP_MAGIC
-    out += bytes([0])           # version 0
-    out += bytes(3)             # reserved
-    out += struct.pack('<I', len(body))
-    out += body
-    return bytes(out)
-
-
-def parse_tap(tap_bytes):
-    """Read a version-0 .tap container, returning the list of pulse bytes."""
-    if tap_bytes[:12] != TAP_MAGIC:
-        raise DecodeError('not a C64 TAP file')
-    (length,) = struct.unpack('<I', tap_bytes[16:20])
-    return list(tap_bytes[20:20 + length])
+    return wrap_tap(pulses)
 
 
 # --------------------------------------------------------------------------
-# TAP -> WAV (synthesise audio)
-# --------------------------------------------------------------------------
-
-def tap_pulses_to_samples(pulses, samplerate, cpufreq=CPU_FREQ, amplitude=20000):
-    """Render TAP pulses as a square-wave int16 sample array.
-
-    Each pulse becomes one full wave cycle (high half then low half) whose period
-    is ``pulse * 8 / cpufreq`` seconds, so every pulse boundary is a single rising
-    zero crossing -- exactly what wav2tapsp measures.
-    """
-    p = np.asarray(pulses, dtype=np.float64)
-    dur_n = p * 8.0 / cpufreq * samplerate     # samples per pulse (float)
-    starts = np.empty(len(p) + 1)
-    starts[0] = 0.0
-    np.cumsum(dur_n, out=starts[1:])
-    total = int(np.ceil(starts[-1]))
-    n = np.arange(total)
-    idx = np.searchsorted(starts, n, side='right') - 1
-    np.clip(idx, 0, len(p) - 1, out=idx)
-    within = n - starts[idx]
-    high = within < (dur_n[idx] * 0.5)
-    return np.where(high, amplitude, -amplitude).astype(np.int16)
-
-
-def write_wav(path, samples, samplerate):
-    """Write a mono 16-bit PCM WAV file (readable by scipy.io.wavfile)."""
-    with wave.open(path, 'wb') as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(samplerate)
-        w.writeframes(np.asarray(samples, dtype='<i2').tobytes())
-
-
-# --------------------------------------------------------------------------
-# TAP -> PRG (decode)
+# TAP -> PRG (decode, standard ROM format)
 # --------------------------------------------------------------------------
 
 def _classify(pulses):
@@ -343,9 +376,14 @@ def pulses_to_prg(pulses):
         i = _next_marker(syms, i)
         if i >= len(syms):
             break
-        block, i = _read_block(syms, i)
+        block, nxt = _read_block(syms, i)
         if block:
             blocks.append(block)
+            i = nxt
+        else:
+            # a lone 'L' that isn't a byte marker (only happens on garbled /
+            # undersampled input); skip it so we always make progress.
+            i += 1
 
     if len(blocks) < 2:
         raise DecodeError('expected at least a header and a data block, got %d' % len(blocks))

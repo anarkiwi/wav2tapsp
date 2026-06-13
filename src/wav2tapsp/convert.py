@@ -1,16 +1,15 @@
-#!/usr/bin/python
-
 # Copyright 2022 Josh Bailey (josh@vandervecken.com)
 
-# scipy based WAV -> C64 TAP converter.
+"""scipy based WAV -> C64 TAP converter.
 
-# https://web.archive.org/web/20180709173001/http://c64tapes.org/dokuwiki/doku.php?id=analyzing_loaders#tap_format
-# http://unusedino.de/ec64/technical/formats/tap.html
+https://web.archive.org/web/20180709173001/http://c64tapes.org/dokuwiki/doku.php?id=analyzing_loaders#tap_format
+http://unusedino.de/ec64/technical/formats/tap.html
+"""
 
-import argparse
 import struct
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 import scipy.io.wavfile
 
 # PAL CPU frequency in Hz.
@@ -72,21 +71,7 @@ def wav_to_tap(x, sr, cpufreq=DEFAULT_CPUFREQ):
     return pulses_to_tap(wav_to_pulses(x, sr, cpufreq))
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description='Convert WAV file into a C64 .tap file')
-    parser.add_argument('wavfile', help='input WAV file')
-    parser.add_argument('--cpufreq', default=int(DEFAULT_CPUFREQ), type=int, help='CPU frequency in Hz')
-    args = parser.parse_args(argv)
-
-    sr, x = scipy.io.wavfile.read(args.wavfile)
-    tap = wav_to_tap(x, sr, args.cpufreq)
-
-    outfile = args.wavfile.replace('.wav', '.tap')
-    assert args.wavfile != outfile
-
-    with open(outfile, 'wb') as f:
-        f.write(tap)
-
-
-if __name__ == '__main__':
-    main()
+def read_wav_to_tap(wavfile, cpufreq=DEFAULT_CPUFREQ):
+    """Read a WAV file from disk and return its .tap bytes."""
+    sr, x = scipy.io.wavfile.read(wavfile)
+    return wav_to_tap(x, sr, cpufreq)
