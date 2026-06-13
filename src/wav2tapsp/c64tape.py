@@ -376,9 +376,14 @@ def pulses_to_prg(pulses):
         i = _next_marker(syms, i)
         if i >= len(syms):
             break
-        block, i = _read_block(syms, i)
+        block, nxt = _read_block(syms, i)
         if block:
             blocks.append(block)
+            i = nxt
+        else:
+            # a lone 'L' that isn't a byte marker (only happens on garbled /
+            # undersampled input); skip it so we always make progress.
+            i += 1
 
     if len(blocks) < 2:
         raise DecodeError('expected at least a header and a data block, got %d' % len(blocks))

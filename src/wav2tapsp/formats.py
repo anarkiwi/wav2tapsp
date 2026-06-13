@@ -57,7 +57,7 @@ class LoaderFormat:
     name: str
     short_tap: int
     long_tap: int
-    pilot_count: int = 1000
+    pilot_count: int = 300
     sync_byte: int = 0x5A
     pilot_tap: int = None
     reference: str = ''
