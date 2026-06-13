@@ -53,10 +53,12 @@ def test_full_resolution_range_round_trips(bits):
     assert analysis.roundtrip_ok(loader, _prg(), sr, waveform='sine', bits=bits)
 
 
-def test_quantiser_one_bit_is_pure_sign():
-    # sanity-check the resolution helper: 1 bit collapses to +/- (the sign).
+def test_quantiser_one_bit_preserves_sign():
+    # sanity-check the resolution helper: 1 bit keeps only the sign, so it has no
+    # zero level and every sample keeps the sign of the input -- which is exactly
+    # what preserves the zero crossings.
     x = c64tape.tap_pulses_to_samples([c64tape.MEDIUM] * 20, 96000, waveform='sine')
     q = c64tape.quantize_resolution(x, bits=1, amplitude=20000)
-    levels = set(np.unique(q).tolist())
-    assert len(levels) == 2
-    assert all(v < 0 or v > 0 for v in levels)  # no zero level; pure sign
+    assert 0 not in np.unique(q)        # no zero level
+    assert q[x > 0].min() > 0           # positive input stays positive
+    assert q[x < 0].max() < 0           # negative input stays negative
