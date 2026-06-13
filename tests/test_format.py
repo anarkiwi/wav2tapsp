@@ -5,7 +5,7 @@ import struct
 import numpy as np
 import pytest
 
-import c64tape
+from wav2tapsp import c64tape
 
 
 def test_sample_prg_is_valid_basic():

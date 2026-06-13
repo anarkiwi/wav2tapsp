@@ -12,10 +12,11 @@ import sys
 
 import numpy as np
 
-import c64tape
 import wav2tapsp
+from wav2tapsp import c64tape
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(ROOT, 'src')
 
 # 96 kHz gives a comfortable timing margin for the short/medium/long pulse
 # classification after the lossy WAV -> TAP re-quantisation.
@@ -52,9 +53,8 @@ def test_roundtrip_via_cli(tmp_path):
     _make_wav_for(prg, wav_path)
 
     # Run the actual command-line entry point, exactly as a user would.
-    subprocess.run(
-        [sys.executable, os.path.join(ROOT, 'wav2tapsp.py'), wav_path],
-        check=True, cwd=ROOT)
+    env = dict(os.environ, PYTHONPATH=SRC)
+    subprocess.run([sys.executable, '-m', 'wav2tapsp', wav_path], check=True, env=env)
 
     tap_path = wav_path[:-4] + '.tap'
     assert os.path.exists(tap_path)
